@@ -1,140 +1,159 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+[RequireComponent(typeof(MeshFilter))]
 public class Capsule : MonoBehaviour
 {
-    public int Sides { set { _sides = value; } }
-    public float Radius { set { _radius = value; } }
-    public float Height { set { _height = value; } }
+    public int Sides
+    {
+        set
+        {
+            if (value < 3)
+                throw new ArgumentException("Количество граней должно быть не менее 3");
+            _sides = value;
+            UpdateCapsule();
+        }
+    }
+    public float Radius
+    {
+        set
+        {
+            if (value <= 0)
+                throw new ArgumentException("Радиус должен быть больше 0");
+            _radius = value;
+            UpdateCapsule();
+        }
+    }
+    public float Height { set { _height = value; UpdateCapsule(); } }
 
     private float _radius = 1f;
     private float _height = 2f;
     private int _sides = 32;
-    private int rings = 16;
+    private int _rings = 16;
+
     private MeshFilter mf;
 
     private void Start()
     {
         mf = GetComponent<MeshFilter>();
-        mf.mesh = CreateCapsuleMesh();
+        UpdateCapsule();
     }
 
-    private void Update()
+    /// <summary>
+    /// Обновление параметров капсулы
+    /// </summary>
+    private void UpdateCapsule()
     {
-        mf.mesh = CreateCapsuleMesh();
+        mf.mesh = CreateCapsule();
     }
 
-    private Mesh CreateCapsuleMesh()
+    /// <summary>
+    /// Создаёт сетку капсулы с указанными параметрами.
+    /// </summary>
+    /// <returns>Созданный меш</returns>
+    private Mesh CreateCapsule()
     {
-        Mesh mesh = new ();
-        Mesh cylinderMesh = CreateCylinderMesh(_radius, _height, _sides, rings);
-        Mesh topSphereMesh = CreateSphereMesh(_radius, _sides, rings);
-        Mesh bottomSphereMesh = CreateSphereMesh(_radius, _sides, rings);
+        // Создание нового экземпляра Mesh
+        Mesh mesh = new();
+        // Определение размеров капсулы на основании радиуса
+        Vector3 dimensions = new Vector3(_radius, _radius, _radius);
+        // Списки для хранения вершин, индексов треугольников и UV меша капсулы
+        List<Vector3> verts = new List<Vector3>();
+        List<int> tris = new List<int>();
+        List<Vector2> uvs = new List<Vector2>();
+        // Определение индекса экваториального меридиана
+        int equatorialMeridian = _rings / 2;
 
-        CombineInstance[] combineInstances = new CombineInstance[3];
-        combineInstances[0].mesh = cylinderMesh;
-        combineInstances[0].transform = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, Vector3.one);
-        combineInstances[1].mesh = topSphereMesh;
-        combineInstances[1].transform = Matrix4x4.TRS(new Vector3(0, _height / 2, 0), Quaternion.identity, Vector3.one);
-        combineInstances[2].mesh = bottomSphereMesh;
-        combineInstances[2].transform = Matrix4x4.TRS(new Vector3(0, -_height / 2, 0), Quaternion.identity, Vector3.one);
-
-        mesh.CombineMeshes(combineInstances, true, true);
-        return mesh;
-    }
-
-    private Mesh CreateCylinderMesh(float _radius, float _height, int _sides, int rings)
-    {
-        Mesh mesh = new ();
-        Vector3[] vertices = new Vector3[(_sides + 1) * (rings + 1)];
-        int vertexIndex = 0;
-
-        for (int r = 0; r <= rings; r++)
+        try
         {
-            for (int s = 0; s <= _sides; s++)
+            // Перебор всех вертикальных секторов (долгота)
+            for (int i = 0; i <= _sides; i++)
             {
-                float angle = Mathf.Deg2Rad * s * 360f / _sides;
-                float x = _radius * Mathf.Cos(angle);
-                float z = _radius * Mathf.Sin(angle);
-                float y = (float)r / rings * _height - _height / 2;
-                vertices[vertexIndex++] = new Vector3(x, y, z);
+                // Вычисление угла долготы в радианах
+                float longitude = (Mathf.PI * 2 * i) / _sides;
+                // Начальное смещение по вертикали
+                float verticalOffset = -_height / 2;
+                // Количество дополнительных колец для обработки
+                int extraRings = 4;
+                int createEquator = extraRings - 1;
+                // Перебор всех горизонтальных секторов (широта)
+                for (int j = 0; j <= _rings; j++)
+                {
+                    // Флаг для определения необходимости создания треугольников
+                    bool emitTriangles = true;
+                    int effectiveJ = j;
+                    // Соответствие индекса экваториальному меридиану
+                    if (j == equatorialMeridian)
+                    {
+                        // Обработка дополнительных колец
+                        if (createEquator > 0)
+                        {
+                            // Отключение создания треугольников для некоторых экваториальных колец
+                            if (createEquator == 2)
+                                emitTriangles = false;
+                            if (createEquator == 1)
+                                verticalOffset = -verticalOffset;
+                            createEquator--;
+                            j--;
+                        }
+                        else
+                            emitTriangles = false;
+                    }
+                    // Получение текущего количества вершин
+                    int n = verts.Count;
+                    // Вычисление угла широты в радианах
+                    float latitude = (Mathf.PI * effectiveJ) / _rings - Mathf.PI / 2;
+                    // Вычисление координат вершины в сферических координатах
+                    Vector3 sphericalPoint = new Vector3(
+                        Mathf.Cos(longitude) *
+                            Mathf.Cos(latitude) * dimensions.x,
+                        Mathf.Sin(latitude) * dimensions.y + verticalOffset,
+                        Mathf.Sin(longitude) *
+                            Mathf.Cos(latitude) * dimensions.z);
+                    // Добавление вычисленной вершины в список вершин
+                    verts.Add(sphericalPoint);
+                    // Создание UV-развертки
+                    float v = sphericalPoint.y / (dimensions.y * 2 + _height) + 0.5f;
+                    Vector2 uvPoint = new Vector2((float)i / _sides, v);
+                    uvs.Add(uvPoint);
+                    // Создание треугольников, если необходимо
+                    if (emitTriangles)
+                    {
+                        // Создание треугольников для боковых граней капсулы
+                        if (i > 0 && j > 0)
+                        {
+                            // Количество колец с дополнительными кольцами
+                            int effectiveRings = _rings + extraRings;
+                            // Добавление индексов для первого треугольника
+                            tris.Add(n);
+                            tris.Add(n - effectiveRings - 1);
+                            tris.Add(n - effectiveRings);
+                            // Добавление индексов для второго треугольника
+                            tris.Add(n);
+                            tris.Add(n - 1);
+                            tris.Add(n - effectiveRings - 1);
+                        }
+                    }
+                }
             }
         }
-
-        int[] triangles = new int[_sides * rings * 6];
-        int triangleIndex = 0;
-
-        for (int r = 0; r < rings; r++)
+        catch (OutOfMemoryException ex)
         {
-            for (int s = 0; s < _sides; s++)
-            {
-                int topLeft = (r + 1) * (_sides + 1) + s;
-                int topRight = (r + 1) * (_sides + 1) + (s + 1);
-                int bottomLeft = r * (_sides + 1) + s;
-                int bottomRight = r * (_sides + 1) + (s + 1);
-
-                //first tri
-                triangles[triangleIndex++] = bottomLeft;
-                triangles[triangleIndex++] = topLeft;
-                triangles[triangleIndex++] = topRight;
-
-                //second tri
-                triangles[triangleIndex++] = bottomLeft;
-                triangles[triangleIndex++] = topRight;
-                triangles[triangleIndex++] = bottomRight;
-            }
+            // Обработка исключения при нехватке памяти для списков вершин и треугольников
+            throw new InvalidOperationException("Не удалось выделить память для списков вершин и треугольников.", ex);
         }
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
+        // Очистка существующих данных в меше
+        mesh.Clear();
+        // Присвоение вершин, треугольников и UV мешу
+        mesh.vertices = verts.ToArray();
+        mesh.triangles = tris.ToArray();
+        mesh.uv = uvs.ToArray();
+        // Оптимизация и перерасчёт нормалей для улучшения производительности и качества
+        mesh.Optimize();
         mesh.RecalculateNormals();
-        return mesh;
-    }
-
-    private Mesh CreateSphereMesh(float _radius, int _sides, int rings)
-    {
-        Mesh mesh = new ();
-        Vector3[] vertices = new Vector3[(_sides + 1) * (rings + 1)];
-        int vertexIndex = 0;
-
-        for (int r = 0; r <= rings; r++)
-        {
-            for (int s = 0; s <= _sides; s++)
-            {
-                float angle = Mathf.Deg2Rad * s * 360f / _sides;
-                float x = _radius * Mathf.Cos(angle) * Mathf.Sin((float)r / rings * Mathf.PI);
-                float z = _radius * Mathf.Sin(angle) * Mathf.Sin((float)r / rings * Mathf.PI);
-                float y = _radius * Mathf.Cos((float)r / rings * Mathf.PI);
-                vertices[vertexIndex++] = new Vector3(x, y, z);
-            }
-        }
-        int[] triangles = new int[_sides * rings * 6];
-        int triangleIndex = 0;
-
-        for (int r = 0; r < rings; r++)
-        {
-            for (int s = 0; s < _sides; s++)
-            {
-                int topLeft = (r + 1) * (_sides + 1) + s;
-                int topRight = (r + 1) * (_sides + 1) + (s + 1);
-                int bottomLeft = r * (_sides + 1) + s;
-                int bottomRight = r * (_sides + 1) + (s + 1);
-
-                //first tri
-                triangles[triangleIndex++] = topRight;
-                triangles[triangleIndex++] = topLeft;
-                triangles[triangleIndex++] = bottomLeft;
-
-                //second tri
-                triangles[triangleIndex++] = bottomRight;
-                triangles[triangleIndex++] = topRight;
-                triangles[triangleIndex++] = bottomLeft;
-            }
-        }
-
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
-        mesh.RecalculateNormals();
+        // Возврат созданного меша
         return mesh;
     }
 }
